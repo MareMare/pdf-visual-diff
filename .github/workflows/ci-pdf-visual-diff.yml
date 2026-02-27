@@ -1,0 +1,129 @@
+name: PDF Visual Diff
+
+on:
+  # 手動実行
+  workflow_dispatch:
+
+  # compare-pdf.py または テスト用PDFの変更時
+  push:
+    paths:
+      - .github/workflows/ci-pdf-visual-diff.yml
+      - "compare-pdf.py"
+      - "testfiles/**"
+
+  # Pull Request 時
+  pull_request:
+    paths:
+      - .github/workflows/ci-pdf-visual-diff.yml
+      - "compare-pdf.py"
+      - "testfiles/**"
+
+env:
+  COMPARE_SCRIPT: "compare-pdf.py"
+  TESTFILES_DIR:  "testfiles"
+  OUTPUT_DIR:     "visual_diff_results"
+
+jobs:
+  # -----------------------------------------------------------------------
+  # Job 1: テスト対象ペアの検出
+  #   testfiles/ 以下の expected_*.pdf に対応する actual_*.pdf を検索し、
+  #   後続の compare ジョブに matrix として渡す。
+  # -----------------------------------------------------------------------
+  discover:
+    name: Discover PDF pairs
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find PDF pairs
+        id: set-matrix
+        shell: bash
+        run: |
+          pairs=()
+          for expected in ${{ env.TESTFILES_DIR }}/expected_*.pdf; do
+            # expected_foo.pdf → actual_foo.pdf を対応ファイルとみなす
+            filename=$(basename "$expected")
+            actual="${{ env.TESTFILES_DIR }}/actual_${filename#expected_}"
+            if [ -f "$actual" ]; then
+              label="${filename#expected_}"
+              label="${label%.pdf}"
+              pairs+=("{\"label\":\"${label}\",\"expected\":\"${expected}\",\"actual\":\"${actual}\"}")
+            else
+              echo "⚠️ No matching actual file for: $expected (expected: $actual)"
+            fi
+          done
+
+          if [ ${#pairs[@]} -eq 0 ]; then
+            echo "❌ No PDF pairs found. Check testfiles/ directory."
+            exit 1
+          fi
+
+          # JSON 配列を構築して matrix に渡す
+          json=$(IFS=,; echo "[${pairs[*]}]")
+          echo "matrix={\"include\":${json}}" >> "$GITHUB_OUTPUT"
+          echo "Found ${#pairs[@]} PDF pair(s): $json"
+
+  # -----------------------------------------------------------------------
+  # Job 2: ペアごとの視覚差分チェック（マトリクス並列実行）
+  # -----------------------------------------------------------------------
+  compare:
+    name: Compare [${{ matrix.label }}]
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false   # 1件失敗しても他のペアの比較を継続する
+      matrix: ${{ fromJson(needs.discover.outputs.matrix) }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install poppler-utils
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y poppler-utils
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v7
+
+      # uv のキャッシュを活用して依存パッケージの再ダウンロードを防ぐ
+      - name: Cache uv packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('compare-pdf.py') }}
+          restore-keys: |
+            uv-${{ runner.os }}-
+
+      - name: Run visual diff check
+        id: diff
+        run: |
+          uv run "${{ env.COMPARE_SCRIPT }}" \
+            "${{ matrix.expected }}" \
+            "${{ matrix.actual }}" \
+            --output "${{ env.OUTPUT_DIR }}/${{ matrix.label }}"
+
+      # 差分あり（ステップ失敗）のときのみアーティファクトを保存
+      - name: Upload diff results
+        if: failure() && steps.diff.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdf-diff-${{ matrix.label }}
+          path: ${{ env.OUTPUT_DIR }}/${{ matrix.label }}/
+          retention-days: 7
+
+      # ジョブサマリーに結果を記録（成功・失敗いずれも）
+      - name: Write job summary
+        if: always()
+        run: |
+          if [ "${{ steps.diff.outcome }}" = "success" ]; then
+            echo "## ✅ ${{ matrix.label }}: 差分なし" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## ❌ ${{ matrix.label }}: 差分検出" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "差分画像はアーティファクト \`pdf-diff-${{ matrix.label }}\` を確認してください。" >> "$GITHUB_STEP_SUMMARY"
+          fi
