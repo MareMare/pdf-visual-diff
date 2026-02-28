@@ -110,7 +110,7 @@ jobs:
       # 差分あり（ステップ失敗）のときのみアーティファクトを保存
       - name: Upload diff results
         if: failure() && steps.diff.outcome == 'failure'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pdf-diff-${{ matrix.label }}
           path: ${{ env.OUTPUT_DIR }}/${{ matrix.label }}/
