@@ -70,13 +70,13 @@ uv run compare-pdf.py expected.pdf output.pdf --output visual_diff_results
 ### 例
 ```ps1
 # 同じ内容のPDFファイルを比較
-uv run compare-pdf.py testfiles/expected.pdf testfiles/actual1.pdf
+uv run compare-pdf.py testfiles/expected_pattern1.pdf testfiles/actual_pattern1.pdf
 
 # 文字列が異なるPDFファイルを比較
-uv run compare-pdf.py testfiles/expected.pdf testfiles/actual2.pdf
+uv run compare-pdf.py testfiles/expected_pattern2.pdf testfiles/actual_pattern2.pdf
 
 # ページ数が異なるPDFファイルを比較
-uv run compare-pdf.py testfiles/expected.pdf testfiles/actual3.pdf
+uv run compare-pdf.py testfiles/expected_pattern3.pdf testfiles/actual3_pattern3.pdf
 ```
 
 ### 実行結果
